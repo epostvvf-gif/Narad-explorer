@@ -1,0 +1,6 @@
+{
+  "name": "नारद एक्सप्लोरर",
+  "description": "नारद एक्सप्लोरर - स्थानीय फ़ाइलों, एसडी कार्ड और गूगल ड्राइव को स्कैन करने, सेमेंटिक खोज और एआई-आधारित फ़ाइल टैगिंग की अनूठी क्षमता वाला एक सरल फ़ाइल प्रबंधक।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
