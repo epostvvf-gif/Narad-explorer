@@ -159,7 +159,7 @@ class FileRepository(private val context: Context) {
         if (count < 20) {
             onProgress(count, "अतिरिक्त अनुक्रमणिका तैयार की जा रही है...")
             val categories = listOf("images", "videos", "audio", "documents", "apps", "downloads")
-            val tagsArr = listOf("Work", "Personal", "Project", "Secret", "Taxes", "Urgent", "Finance", "Invoice", "Travel", "Receipt")
+            val tagsArr = listOf("Work", "Personal", "Project", "Secret", "Taxes", "Urgent", "Finance", "Invoice", "Travel", "Receipt", "docx", "book", "letters")
             val formats = mapOf(
                 "images" to listOf(".jpg", ".png", ".webp"),
                 "videos" to listOf(".mp4", ".mkv", ".mov"),
@@ -255,10 +255,17 @@ class FileRepository(private val context: Context) {
     private fun generateInitialTagsForFile(name: String, cat: String): String {
         val tags = mutableListOf<String>()
         val lowercase = name.lowercase(Locale.ROOT)
+        
+        // Priority tags
         if (lowercase.contains("work") || lowercase.contains("project") || lowercase.contains("office")) tags.add("Work")
         if (lowercase.contains("bill") || lowercase.contains("receipt") || lowercase.contains("tax") || lowercase.contains("invoice")) tags.add("Finance")
-        if (lowercase.contains("family") || lowercase.contains("trip") || lowercase.contains("home")) tags.add("Personal")
+        if (lowercase.contains("family") || lowercase.contains("trip") || lowercase.contains("home") || lowercase.contains("personal")) tags.add("Personal")
         if (lowercase.contains("urgent") || lowercase.contains("critical")) tags.add("Urgent")
+        
+        // Specific user request chips categories
+        if (lowercase.endsWith(".docx") || lowercase.contains("docx")) tags.add("docx")
+        if (lowercase.contains("book") || lowercase.contains("ebook") || lowercase.contains("novel") || lowercase.contains("read")) tags.add("book")
+        if (lowercase.contains("letter") || lowercase.contains("agreement") || lowercase.contains("slip") || lowercase.contains("application") || lowercase.contains("memo")) tags.add("letters")
 
         if (tags.isEmpty()) {
             tags.add(when (cat) {
@@ -457,6 +464,92 @@ class FileRepository(private val context: Context) {
         } catch (e: Exception) {
             Log.e("FileRepository", "Error suggesting semantic tags: ${e.message}")
             listOf("SmartTag", "Cloud", "Verify")
+        }
+    }
+
+    // Batch Auto-Tagging via Gemini to organize catalog with 'Work', 'Personal', 'Receipts', etc.
+    suspend fun autoTagFilesInBatch(files: List<ScannedFile>): List<ScannedFile> = withContext(Dispatchers.IO) {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            Log.e("FileRepository", "Gemini API key is not set for batch tagging, utilizing offline category tags.")
+            val updated = files.map { file ->
+                val suggested = generateInitialTagsForFile(file.name, file.category)
+                val current = file.tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
+                current.addAll(suggested.split(","))
+                file.copy(tags = current.joinToString(","))
+            }
+            fileDao.insertFiles(updated)
+            return@withContext updated
+        }
+
+        val filesInfo = files.take(30).joinToString("\n") { "${it.path} | ${it.name} | ${it.category}" }
+        val prompt = """
+            You are "Narad Auto-Tagging Engine". Below is a list of user files specified as "FilePath | FileName | Category".
+            For EACH file, suggest an appropriate categorised tag (choose or suggest single-word tags like 'Work', 'Personal', 'Receipts', 'Finance', 'Travel', 'Medical', 'Academic', 'Entertainment').
+            
+            Files list:
+            $filesInfo
+            
+            Strictly respond with ONLY a raw JSON dictionary mapping the EXACT file path to the single suggested tag.
+            Example response:
+            {
+               "phone/Internal/Documents/salary_slip_1.pdf": "Finance",
+               "sdcard/DCIM/Family/anniversary.jpg": "Personal"
+            }
+            Do not include any markdown styling like ```json or any explanation messages! Just raw json dictionary.
+        """.trimIndent()
+
+        try {
+            val request = GenerateContentRequest(
+                contents = listOf(Content(parts = listOf(Part(text = prompt))))
+            )
+            val response = RetrofitClient.service.generateContent(apiKey, request)
+            val textResponse = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
+            Log.d("FileRepository", "Gemini Batch Tag Response: $textResponse")
+
+            val cleanedResponse = textResponse.trim().replace("```json", "").replace("```", "").trim()
+            
+            val tagMap = mutableMapOf<String, String>()
+            val regex = Regex("\"([^\"]+)\"\\s*:\\s*\"([^\"]+)\"")
+            regex.findAll(cleanedResponse).forEach { match ->
+                val path = match.groupValues[1]
+                val tag = match.groupValues[2]
+                tagMap[path] = tag
+            }
+
+            val updated = files.map { file ->
+                val aiSuggestedTag = tagMap[file.path]
+                if (aiSuggestedTag != null) {
+                    val currentTags = file.tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
+                    currentTags.add(aiSuggestedTag)
+                    
+                    // Add automatic tag details to Global list
+                    fileDao.insertTag(FileTag(aiSuggestedTag, when(aiSuggestedTag) {
+                        "Work" -> "#00ACC1"
+                        "Personal" -> "#4CAF50"
+                        "Receipts", "Finance" -> "#E65100"
+                        "Travel" -> "#607D8B"
+                        else -> "#D84315"
+                    }, true))
+
+                    file.copy(tags = currentTags.joinToString(","))
+                } else {
+                    file
+                }
+            }
+            
+            fileDao.insertFiles(updated)
+            updated
+        } catch (e: Exception) {
+            Log.e("FileRepository", "Error in Gemini Batch Auto-Tag: ${e.message}")
+            val updated = files.map { file ->
+                val suggested = generateInitialTagsForFile(file.name, file.category)
+                val current = file.tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
+                current.addAll(suggested.split(","))
+                file.copy(tags = current.joinToString(","))
+            }
+            fileDao.insertFiles(updated)
+            updated
         }
     }
 }

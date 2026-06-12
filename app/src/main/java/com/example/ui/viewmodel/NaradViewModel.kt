@@ -7,6 +7,12 @@ import com.example.data.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+data class GoogleUser(
+    val email: String,
+    val displayName: String,
+    val photoUrl: String? = null
+)
+
 sealed interface ScanUiState {
     object Idle : ScanUiState
     data class Scanning(val progress: Int, val description: String) : ScanUiState
@@ -98,9 +104,73 @@ class NaradViewModel(application: Application) : AndroidViewModel(application) {
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StorageSpaceInfo())
 
+    // Google Authentication Flow & Google Drive Integration
+    private val _googleUser = MutableStateFlow<GoogleUser?>(null)
+    val googleUser: StateFlow<GoogleUser?> = _googleUser.asStateFlow()
+
+    private val _isDriveConnected = MutableStateFlow(false)
+    val isDriveConnected: StateFlow<Boolean> = _isDriveConnected.asStateFlow()
+
+    // AI Automated Tagging engine states using Gemini
+    private val _isAutoTaggingActive = MutableStateFlow(false)
+    val isAutoTaggingActive: StateFlow<Boolean> = _isAutoTaggingActive.asStateFlow()
+
+    private val _autoTagStatusText = MutableStateFlow("")
+    val autoTagStatusText: StateFlow<String> = _autoTagStatusText.asStateFlow()
+
+    private val _autoTagSuccessCount = MutableStateFlow(0)
+    val autoTagSuccessCount: StateFlow<Int> = _autoTagSuccessCount.asStateFlow()
+
+    fun signInWithGoogle(email: String, displayName: String) {
+        viewModelScope.launch {
+            _googleUser.value = GoogleUser(email = email, displayName = displayName)
+            _isDriveConnected.value = true
+            // Trigger automatic re-indexing scan to pull down Drive index files next to internal
+            triggerScan(includePhone = true, includeSdCard = true, includeDrive = true)
+        }
+    }
+
+    fun signOutGoogle() {
+        viewModelScope.launch {
+            _googleUser.value = null
+            _isDriveConnected.value = false
+            _searchResults.value = emptyList()
+            // Pull only local internal storage
+            triggerScan(includePhone = true, includeSdCard = true, includeDrive = false)
+        }
+    }
+
+    // AI batch tagging engine which tags the catalog using Gemini
+    fun runBatchAutoTagging() {
+        viewModelScope.launch {
+            _isAutoTaggingActive.value = true
+            _autoTagStatusText.value = "एआई इंजन लोड हो रहा है..."
+            _autoTagSuccessCount.value = 0
+            
+            val filesList = allFiles.value.filter { it.tags.isEmpty() || it.tags == "Photos" || it.tags == "Clips" || it.tags == "Docs" }
+            if (filesList.isEmpty()) {
+                _autoTagStatusText.value = "सभी फाइलें पहले ही टैग की जा चुकी हैं!"
+                _isAutoTaggingActive.value = false
+                return@launch
+            }
+
+            // Chunk in groups of 12 files to avoid Gemini token bottlenecks
+            val chunks = filesList.chunked(12)
+            var count = 0
+            for ((index, chunk) in chunks.withIndex()) {
+                _autoTagStatusText.value = "${index + 1}/${chunks.size} बैच: ${chunk.size} फाइलों का वर्गीकरण..."
+                val updated = repository.autoTagFilesInBatch(chunk)
+                count += updated.size
+                _autoTagSuccessCount.value = count
+            }
+            _autoTagStatusText.value = "सफलता! एआई ने $count फाइलों को कैटेगरी 'Work', 'Personal', 'Receipts', 'Finance' इत्यादि में उत्कृष्ट रूप से संरेखित किया।"
+            _isAutoTaggingActive.value = false
+        }
+    }
+
     init {
-        // Run initial fast scan to set up database
-        triggerScan(includePhone = true, includeSdCard = true, includeDrive = true)
+        // Run initial fast scan only on phone + sdcard on first install - Google Drive will activate post connection inside Google Login
+        triggerScan(includePhone = true, includeSdCard = true, includeDrive = false)
         
         // Setup initial default tags in db
         viewModelScope.launch {
@@ -108,6 +178,9 @@ class NaradViewModel(application: Application) : AndroidViewModel(application) {
             repository.insertTag(FileTag("Personal", "#4CAF50"))
             repository.insertTag(FileTag("Taxes", "#E65100"))
             repository.insertTag(FileTag("Urgent", "#D84315"))
+            repository.insertTag(FileTag("docx", "#E91E63"))
+            repository.insertTag(FileTag("book", "#9C27B0"))
+            repository.insertTag(FileTag("letters", "#673AB7"))
         }
 
         // Auto filter list search of local DB

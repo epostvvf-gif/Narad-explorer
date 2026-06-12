@@ -40,6 +40,14 @@ import com.example.ui.theme.*
 import com.example.ui.viewmodel.NaradViewModel
 import com.example.ui.viewmodel.ScanUiState
 import com.example.ui.viewmodel.StorageSpaceInfo
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import android.content.Intent
+import android.net.Uri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -54,6 +62,21 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
     val scanState by viewModel.scanState.collectAsStateWithLifecycle()
     val allFiles by viewModel.allFiles.collectAsStateWithLifecycle()
     val storageSpace by viewModel.storageSpace.collectAsStateWithLifecycle()
+
+    val googleUser by viewModel.googleUser.collectAsStateWithLifecycle()
+    val isDriveConnected by viewModel.isDriveConnected.collectAsStateWithLifecycle()
+    var showGoogleSignInConsent by remember { mutableStateOf(false) }
+
+    // Display Google Consent Dialogue Box
+    if (showGoogleSignInConsent) {
+        GoogleSignInConsentDialog(
+            userEmail = "epostvvf@gmail.com",
+            onDismiss = { showGoogleSignInConsent = false },
+            onConfirm = { email: String, name: String ->
+                viewModel.signInWithGoogle(email, name)
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -75,13 +98,13 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
                         Column {
                             Text(
                                 text = "नारद एक्सप्लोरर",
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "AI फ़ाइल मैनेजर",
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.secondary,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -99,8 +122,58 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
                     }
                 },
                 actions = {
+                    // Google Profile Quick Indicator
+                    if (googleUser != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                .clickable { viewModel.signOutGoogle() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = googleUser!!.displayName.take(1),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
+                            Text(
+                                text = "लॉग-आउट",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = { showGoogleSignInConsent = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier
+                                .height(28.dp)
+                                .padding(end = 6.dp)
+                                .testTag("btn_top_sign_in")
+                        ) {
+                            Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("साइन-इन", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
                     IconButton(
-                        onClick = { viewModel.triggerScan(true, true, true) },
+                        onClick = { viewModel.triggerScan(true, true, isDriveConnected) },
                         modifier = Modifier.testTag("action_scan_refresh")
                     ) {
                         Icon(
@@ -229,10 +302,11 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
                     0 -> {
                         // Clean Up tab
                         CleanUpSection(
+                            viewModel = viewModel,
                             storageSpace = storageSpace,
                             scanState = scanState,
                             onCleanClick = { viewModel.cleanSelectedJunk() },
-                            onTriggerScan = { viewModel.triggerScan(true, true, true) }
+                            onTriggerScan = { viewModel.triggerScan(true, true, isDriveConnected) }
                         )
                     }
                     1 -> {
@@ -276,6 +350,7 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
 // 1. CLEAN UP TAB (Google Files style junk cleaner)
 @Composable
 fun CleanUpSection(
+    viewModel: NaradViewModel,
     storageSpace: StorageSpaceInfo,
     scanState: ScanUiState,
     onCleanClick: () -> Unit,
@@ -286,6 +361,11 @@ fun CleanUpSection(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        // Storage Permission Banner
+        item {
+            ScopedStoragePermissionBanner()
+        }
+
         // Space distribution card
         item {
             Card(
@@ -505,6 +585,128 @@ fun CleanUpSection(
                 }
             }
         }
+
+        // AI Auto-Tagging engine widget Card
+        item {
+            val isAutoTaggingActive by viewModel.isAutoTaggingActive.collectAsStateWithLifecycle()
+            val autoTagStatusText by viewModel.autoTagStatusText.collectAsStateWithLifecycle()
+            val autoTagSuccessCount by viewModel.autoTagSuccessCount.collectAsStateWithLifecycle()
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+                    .testTag("ai_auto_tag_card")
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "नारद एआई ऑटो-टैगिंग इंजन",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Gemini AI Automation Tagging Engine",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "जेमिनी एआई की शक्ति का उपयोग करके अपनी सभी फाइलों का स्वचालित रूप से नाम के आधार पर विश्लेषण करें और 'Work', 'Personal', 'Receipts', या 'Finance' जैसे प्रोफेशनल टैग असाइन करें ताकि आपका कैटलॉग पूरी तरह से आर्गेनाइज्ड रहे।",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 15.sp
+                    )
+                    
+                    if (isAutoTaggingActive) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = autoTagStatusText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "वर्गीकृत: $autoTagSuccessCount फ़ाइलें",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
+                    } else if (autoTagStatusText.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = autoTagStatusText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = NaradEmerald
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { viewModel.runBatchAutoTagging() },
+                        enabled = !isAutoTaggingActive,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("run_auto_tagging_btn"),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isAutoTaggingActive) "स्वचालित टैगिंग जारी है..." else "पूरी स्टोरेज एआई ऑटो-टैग करें",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -555,6 +757,7 @@ fun BreakdownRow(
 }
 
 // 2. BROWSE TAB (Google Files style grid)
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun BrowseSection(
     allFilesCount: Int,
@@ -564,6 +767,48 @@ fun BrowseSection(
 ) {
     val allFiles by viewModel.allFiles.collectAsStateWithLifecycle()
     val scanState by viewModel.scanState.collectAsStateWithLifecycle()
+    val googleUser by viewModel.googleUser.collectAsStateWithLifecycle()
+    val isDriveConnected by viewModel.isDriveConnected.collectAsStateWithLifecycle()
+
+    var showSignInLocalDialog by remember { mutableStateOf(false) }
+    var activeDashboardTagFilter by remember { mutableStateOf<String?>(null) }
+
+    val docxCount = remember(allFiles) {
+        allFiles.count { it.tags.split(",").any { t -> t.trim().equals("docx", ignoreCase = true) } || it.name.endsWith(".docx", ignoreCase = true) }
+    }
+    val bookCount = remember(allFiles) {
+        allFiles.count { it.tags.split(",").any { t -> t.trim().equals("book", ignoreCase = true) } || it.name.contains("book", ignoreCase = true) || it.name.contains("ebook", ignoreCase = true) }
+    }
+    val personalCount = remember(allFiles) {
+        allFiles.count { it.tags.split(",").any { t -> t.trim().equals("personal", ignoreCase = true) } }
+    }
+    val lettersCount = remember(allFiles) {
+        allFiles.count { it.tags.split(",").any { t -> t.trim().equals("letters", ignoreCase = true) } || it.name.contains("letter", ignoreCase = true) || it.name.contains("agreement", ignoreCase = true) || it.name.contains("slip", ignoreCase = true) }
+    }
+
+    val displayedFiles = remember(activeDashboardTagFilter, allFiles) {
+        val f = activeDashboardTagFilter
+        if (f == null) {
+            allFiles
+        } else {
+            allFiles.filter { file ->
+                file.tags.split(",").any { t -> t.trim().equals(f, ignoreCase = true) } ||
+                (f == "docx" && file.name.endsWith(".docx", ignoreCase = true)) ||
+                (f == "book" && (file.name.contains("book", ignoreCase = true) || file.name.contains("ebook", ignoreCase = true))) ||
+                (f == "letters" && (file.name.contains("letter", ignoreCase = true) || file.name.contains("agreement", ignoreCase = true) || file.name.contains("slip", ignoreCase = true)))
+            }
+        }
+    }
+
+    if (showSignInLocalDialog) {
+        GoogleSignInConsentDialog(
+            userEmail = "epostvvf@gmail.com",
+            onDismiss = { showSignInLocalDialog = false },
+            onConfirm = { email: String, name: String ->
+                viewModel.signInWithGoogle(email, name)
+            }
+        )
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
@@ -589,6 +834,109 @@ fun BrowseSection(
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+        }
+
+        // Storage Permission Banner
+        item {
+            ScopedStoragePermissionBanner()
+        }
+
+        // Multi-Storage devices cards (PHONE, SDCARD, DRIVE)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                     text = "स्टोरेज यूनिट्स (Storage Units)",
+                     fontSize = 14.sp,
+                     fontWeight = FontWeight.Bold,
+                     color = MaterialTheme.colorScheme.secondary
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // 1. Phone internal
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("आंतरिक संग्रहण", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text("32 GB | सक्रिय", fontSize = 9.sp, color = NaradEmerald, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // 2. SD Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Icon(Icons.Default.SdCard, contentDescription = null, tint = NaradFlameOrange, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("एसडी कार्ड", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text("16 GB | सक्रिय", fontSize = 9.sp, color = NaradEmerald, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    // 3. Google Drive
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isDriveConnected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surface
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .clickable {
+                                if (isDriveConnected) {
+                                    viewModel.signOutGoogle()
+                                } else {
+                                    showSignInLocalDialog = true
+                                }
+                            }
+                            .border(
+                                width = 1.5.dp,
+                                color = if (isDriveConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .testTag("google_drive_storage_card")
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudQueue,
+                                    contentDescription = null,
+                                    tint = if (isDriveConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                if (!isDriveConnected) {
+                                    Icon(Icons.Default.Lock, contentDescription = "Locked", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(12.dp))
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("Google Drive", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                text = if (isDriveConnected) "कनेक्टेड" else "थपथपाएं और लॉगिन करें",
+                                fontSize = 9.sp,
+                                color = if (isDriveConnected) NaradEmerald else MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -621,6 +969,18 @@ fun BrowseSection(
                     )
                 }
             }
+        }
+
+        // AI-Suggested categories Dashboard Component
+        item {
+            AiSmartCategoriesDashboard(
+                docxCount = docxCount,
+                bookCount = bookCount,
+                personalCount = personalCount,
+                lettersCount = lettersCount,
+                activeFilter = activeDashboardTagFilter,
+                onFilterClick = { activeDashboardTagFilter = it }
+            )
         }
 
         // Category grid
@@ -699,14 +1059,18 @@ fun BrowseSection(
         // Recent Files / Scans List
         item {
             Text(
-                text = "हाल ही में जोड़ी गई फ़ाइलें (Recent Scans)",
+                text = if (activeDashboardTagFilter != null) {
+                    "श्रेणी फ़िल्टर: '${activeDashboardTagFilter}' (${displayedFiles.size} फ़ाइलें)"
+                } else {
+                    "हाल ही में जोड़ी गई फ़ाइलें (Recent Scans)"
+                },
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary
             )
         }
 
-        if (allFiles.isEmpty()) {
+        if (displayedFiles.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -715,14 +1079,18 @@ fun BrowseSection(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "कोई फ़ाइल अनुक्रमित नहीं है। रिफ्रेश बटन दबाएँ।",
+                        text = if (activeDashboardTagFilter != null) {
+                            "इस श्रेणी से जुड़ी कोई फ़ाइल अनुक्रमित नहीं मिली।"
+                        } else {
+                            "कोई फ़ाइल अनुक्रमित नहीं है। रिफ्रेश बटन दबाएँ।"
+                        },
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         } else {
-            items(allFiles.take(15)) { file ->
+            items(displayedFiles.take(15)) { file ->
                 FileItemRow(file = file, onItemClick = onFileClick, onStarClick = { viewModel.toggleStarred(file) })
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -733,6 +1101,180 @@ fun BrowseSection(
 data class CategoryItem(
     val title: String,
     val id: String,
+    val icon: ImageVector,
+    val color: Color
+)
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun AiSmartCategoriesDashboard(
+    docxCount: Int,
+    bookCount: Int,
+    personalCount: Int,
+    lettersCount: Int,
+    activeFilter: String?,
+    onFilterClick: (String?) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
+            .testTag("ai_categories_dashboard_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth()
+        ) {
+            // Header Row
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = "एआई अनुशंसित श्रेणियां",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "AI-Suggested Categories & Live Counter Dashboard",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(14.dp))
+            
+            // Chips row / flow row
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val chips = listOf(
+                    DashboardChipItem("docx", "docx", docxCount, Icons.Default.Description, Color(0xFF1E88E5)),
+                    DashboardChipItem("book", "book", bookCount, Icons.Default.Book, Color(0xFF8E24AA)),
+                    DashboardChipItem("Personal", "Personal", personalCount, Icons.Default.Person, Color(0xFF43A047)),
+                    DashboardChipItem("letters", "letters", lettersCount, Icons.Default.Mail, Color(0xFFD81B60))
+                )
+                
+                chips.forEach { chip ->
+                    val isSelected = activeFilter == chip.id
+                    
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isSelected) chip.color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            )
+                            .clickable {
+                                if (isSelected) {
+                                    onFilterClick(null)
+                                } else {
+                                    onFilterClick(chip.id)
+                                }
+                            }
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) chip.color else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .testTag("ai_dashboard_chip_${chip.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = chip.icon,
+                                contentDescription = chip.label,
+                                tint = chip.color,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Column(verticalArrangement = Arrangement.Center) {
+                                Text(
+                                    text = chip.label,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "${chip.count} फ़ाइलें",
+                                    fontSize = 8.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = chip.color,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (activeFilter != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onFilterClick(null) }
+                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.12f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "फ़िल्टर सक्रिय है: '${activeFilter}'। सभी हालिया फाइलें देखने के लिए यहाँ क्लिक करें।",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear Filter",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+data class DashboardChipItem(
+    val id: String,
+    val label: String,
+    val count: Int,
     val icon: ImageVector,
     val color: Color
 )
@@ -1514,4 +2056,247 @@ fun formatFileSize(size: Long): String {
 fun formatDate(timestamp: Long): String {
     val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ROOT)
     return sdf.format(Date(timestamp))
+}
+
+@Composable
+fun GoogleSignInConsentDialog(
+    userEmail: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text("Google एकाउंट साइन-इन", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "नारद एक्सप्लोरर आपके Google Drive स्टोरेज का सुरक्षित अनुक्रमण (Indexing) करने के लिए ऑथेंटिकेशन की सहमति चाहता है।",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = userEmail.take(1).uppercase(Locale.ROOT),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Column {
+                            Text("Narad User", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text(userEmail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                
+                Text(
+                    text = "सुरक्षा विकल्प: आपके क्लाउड दस्तावेज़ और प्रविष्टियां पूर्ण गोपनीयता के साथ स्थानीय स्तर पर ही सुरक्षित रहेंगी।",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(userEmail, "Narad User")
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("साइन-इन स्वीकारें", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("रद्द करें", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.testTag("google_login_dialog")
+    )
+}
+
+@Composable
+fun ScopedStoragePermissionBanner(
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var hasPermission by remember { mutableStateOf(false) }
+
+    fun checkPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            val readGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            readGranted
+        }
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = checkPermission()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        hasPermission = checkPermission()
+    }
+
+    if (!hasPermission) {
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+            ),
+            shape = RoundedCornerShape(14.dp),
+            modifier = modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(14.dp))
+                .testTag("scoped_storage_permission_banner")
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Warning",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "स्टोरेज एक्सेस अनुमति आवश्यक (Storage Access Required)",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+
+                Text(
+                    text = "नारद एक्सप्लोरर के एआई अनुक्रमणिका (Semantic Indexing) को सक्रिय रूप से डिवाइस के स्थानीय फोल्डरों और सभी दस्तावेजों (.pdf, .docx, .apk, .zip) को स्कैन करने के लिए 'MANAGE_EXTERNAL_STORAGE' (All Files Access) अधिकार की आवश्यकता है।",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Button(
+                    onClick = {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            } else {
+                                val intent = Intent(Settings.ACTION_SETTINGS)
+                                context.startActivity(intent)
+                            }
+                        } catch (e: Exception) {
+                            try {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                                    context.startActivity(intent)
+                                }
+                            } catch (fallbackEx: Exception) {
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("अनुमति सक्रिय करें (Open Settings)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    } else {
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            ),
+            shape = RoundedCornerShape(14.dp),
+            modifier = modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .testTag("scoped_storage_permission_granted_banner")
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(12.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Storage Accessed",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "पूर्ण स्थानीय स्टोरेज एक्सेस सक्रिय है",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "MANAGE_EXTERNAL_STORAGE अनुमति एआई इंडेक्सिंग के लिए उपलब्ध है।",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
 }

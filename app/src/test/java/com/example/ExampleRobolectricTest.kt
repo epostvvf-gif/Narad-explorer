@@ -18,4 +18,16 @@ class ExampleRobolectricTest {
         val appName = context.getString(R.string.app_name)
         assertEquals("नारद एक्सप्लोरर", appName)
     }
+
+    @Test
+    fun `check manage external storage permission is declared`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val packageInfo = context.packageManager.getPackageInfo(
+            context.packageName,
+            android.content.pm.PackageManager.GET_PERMISSIONS
+        )
+        val permissions = packageInfo.requestedPermissions ?: emptyArray()
+        val hasManageStorage = permissions.contains("android.permission.MANAGE_EXTERNAL_STORAGE")
+        assertEquals(true, hasManageStorage)
+    }
 }
