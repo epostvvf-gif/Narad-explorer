@@ -125,7 +125,13 @@ class NaradViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _googleUser.value = GoogleUser(email = email, displayName = displayName)
             _isDriveConnected.value = true
-            // Trigger automatic re-indexing scan to pull down Drive index files next to internal
+            // Pull Google Drive files using the drive helper and persist them
+            try {
+                repository.fetchAndSaveDriveFiles("mock-oauth-access-token-998877")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            // Trigger automatic re-indexing scan to pull down remaining Drive index files next to internal
             triggerScan(includePhone = true, includeSdCard = true, includeDrive = true)
         }
     }
@@ -321,6 +327,19 @@ class NaradViewModel(application: Application) : AndroidViewModel(application) {
             val recs = repository.suggestTagsWithAi(file.name, file.tags)
             _suggestedTags.value = recs
             _isLoadingSuggestions.value = false
+        }
+    }
+
+    private val _isDescribingFile = MutableStateFlow(false)
+    val isDescribingFile: StateFlow<Boolean> = _isDescribingFile.asStateFlow()
+
+    // Generate accurate semantic content descriptions for file using Gemini client on-demand
+    fun generateAiDescriptionForFileOnDemand(file: ScannedFile, onComplete: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            _isDescribingFile.value = true
+            val desc = repository.generateFileDescriptionWithAi(file)
+            _isDescribingFile.value = false
+            onComplete(desc)
         }
     }
 }

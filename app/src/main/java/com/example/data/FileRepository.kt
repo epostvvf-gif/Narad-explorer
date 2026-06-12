@@ -552,4 +552,56 @@ class FileRepository(private val context: Context) {
             updated
         }
     }
+
+    private val googleDriveService = GoogleDriveService()
+
+    // Pull Google Drive files and persist in DB alongside local files
+    suspend fun fetchAndSaveDriveFiles(accessToken: String): Int = withContext(Dispatchers.IO) {
+        val cloudFiles = googleDriveService.fetchCloudFiles(accessToken)
+        if (cloudFiles.isNotEmpty()) {
+            fileDao.insertFiles(cloudFiles)
+        }
+        cloudFiles.size
+    }
+
+    // AI Metadata Processing: Summarize and generate semantic context for a single file using Gemini
+    suspend fun generateFileDescriptionWithAi(file: ScannedFile): String = withContext(Dispatchers.IO) {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            val fallback = getAiDescriptionTemplate(file.name, "General", file.category)
+            val updated = file.copy(aiDescription = fallback)
+            fileDao.updateFile(updated)
+            return@withContext fallback
+        }
+
+        val prompt = """
+            You are "Narad Metadata Analyzer AI".
+            Generate a concise, professional semantic description (1 detailed sentence in Hindi or English) for the following file metadata:
+            Filename: ${file.name}
+            Path: ${file.path}
+            Category: ${file.category}
+            Size: ${file.size} bytes
+            Tags: ${file.tags}
+            
+            Synthesize the properties into a beautiful summary description. Provide ONLY the final description string itself without any introductory text or quotes.
+        """.trimIndent()
+
+        try {
+            val request = GenerateContentRequest(
+                contents = listOf(Content(parts = listOf(Part(text = prompt))))
+            )
+            val response = RetrofitClient.service.generateContent(apiKey, request)
+            val textResponse = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text?.trim() ?: ""
+            val finalDescription = if (textResponse.isNotEmpty()) textResponse else "विवरण: ${file.name} फ़ाइल।"
+            val updated = file.copy(aiDescription = finalDescription)
+            fileDao.updateFile(updated)
+            finalDescription
+        } catch (e: Exception) {
+            Log.e("FileRepository", "Error in Gemini Single File Description: ${e.message}")
+            val fallback = getAiDescriptionTemplate(file.name, "General", file.category)
+            val updated = file.copy(aiDescription = fallback)
+            fileDao.updateFile(updated)
+            fallback
+        }
+    }
 }

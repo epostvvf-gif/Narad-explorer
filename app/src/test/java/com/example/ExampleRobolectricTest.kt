@@ -30,4 +30,21 @@ class ExampleRobolectricTest {
         val hasManageStorage = permissions.contains("android.permission.MANAGE_EXTERNAL_STORAGE")
         assertEquals(true, hasManageStorage)
     }
+
+    @Test
+    fun `test ScannedFile model attributes and storage classification`() {
+        val file = com.example.data.ScannedFile(
+            path = "drive/xyz123",
+            name = "project_proposal.pdf",
+            size = 1048576,
+            mimeType = "application/pdf",
+            category = "documents",
+            storageType = "DRIVE",
+            lastModified = System.currentTimeMillis(),
+            aiDescription = "A Google Drive PDF File"
+        )
+        assertEquals("DRIVE", file.storageType)
+        assertEquals("documents", file.category)
+        assertEquals("project_proposal.pdf", file.name)
+    }
 }

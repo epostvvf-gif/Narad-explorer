@@ -1839,8 +1839,10 @@ fun FileDetailsModal(
 ) {
     val suggestedTags by viewModel.suggestedTags.collectAsStateWithLifecycle()
     val isLoadingSuggestions by viewModel.isLoadingSuggestions.collectAsStateWithLifecycle()
+    val isDescribingFile by viewModel.isDescribingFile.collectAsStateWithLifecycle()
 
     var newTagInput by remember { mutableStateOf("") }
+    var currentDescription by remember(file.path) { mutableStateOf(file.aiDescription) }
 
     // Fetch AI Suggestions on display
     LaunchedEffect(file) {
@@ -1903,9 +1905,36 @@ fun FileDetailsModal(
                     AttributeRow(label = "आकार (Size):", value = formatFileSize(file.size), valueColor = MaterialTheme.colorScheme.primary)
                     AttributeRow(label = "स्टोरेज प्रकार (Source):", value = file.storageType, valueColor = NaradGold)
                     AttributeRow(label = "संशोधित समय (Modified):", value = formatDate(file.lastModified), valueColor = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (file.aiDescription != null) {
-                        AttributeRow(label = "एआई संदर्भ विवरण:", value = file.aiDescription, valueColor = MaterialTheme.colorScheme.secondary)
+                    if (currentDescription != null) {
+                        AttributeRow(label = "एआई संदर्भ विवरण:", value = currentDescription!!, valueColor = MaterialTheme.colorScheme.secondary)
                     }
+                }
+            }
+
+            // On-demand Metadata Processing Trigger
+            Button(
+                onClick = {
+                    viewModel.generateAiDescriptionForFileOnDemand(file) { newDesc ->
+                        currentDescription = newDesc
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("generate_description_btn"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                shape = RoundedCornerShape(10.dp),
+                enabled = !isDescribingFile
+            ) {
+                if (isDescribingFile) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = MaterialTheme.colorScheme.onSecondary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = "AI Analyze", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "एआई विवरण विश्लेषक (Analyze file with Gemini)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
