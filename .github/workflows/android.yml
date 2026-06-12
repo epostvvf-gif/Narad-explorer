@@ -35,6 +35,12 @@ jobs:
         else
           echo "GEMINI_API_KEY=mock_key" > .env
         fi
+        if [ -f debug.keystore.base64 ]; then
+          base64 -d debug.keystore.base64 > debug.keystore
+          echo "Successfully restored debug.keystore from base64"
+        else
+          echo "Warning: debug.keystore.base64 not found to recover keystore"
+        fi
 
     - name: Verify Project Compilation
       run: gradle assembleDebug
