@@ -1,5 +1,6 @@
 package com.example.data
 
+import android.content.Context
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import okhttp3.OkHttpClient
@@ -60,7 +61,7 @@ object GoogleDriveRetrofitClient {
 }
 
 class GoogleDriveService {
-    suspend fun fetchCloudFiles(accessToken: String): List<ScannedFile> {
+    suspend fun fetchCloudFiles(context: Context, accessToken: String): List<ScannedFile> {
         val authHeader = "Bearer $accessToken"
         val q = "'mimeType' != 'application/vnd.google-apps.folder' and trashed = false"
         return try {
@@ -100,17 +101,19 @@ class GoogleDriveService {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            FileHelperUtils.handleApiError(context, e, "Google Drive")
             emptyList()
         }
     }
 
-    suspend fun deleteCloudFile(accessToken: String, fileId: String): Boolean {
+    suspend fun deleteCloudFile(context: Context, accessToken: String, fileId: String): Boolean {
         val authHeader = "Bearer $accessToken"
         return try {
             GoogleDriveRetrofitClient.service.deleteFile(authHeader, fileId)
             true
         } catch (e: Exception) {
             e.printStackTrace()
+            FileHelperUtils.handleApiError(context, e, "Google Drive")
             false
         }
     }

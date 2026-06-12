@@ -428,6 +428,7 @@ class FileRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e("FileRepository", "Error in Gemini Semantic Search: ${e.message}")
+            FileHelperUtils.handleApiError(context, e, "Gemini")
             // Fallback to offline search
             return@withContext fileDao.getAllFiles().filter { file ->
                 file.name.contains(query, ignoreCase = true) ||
@@ -463,6 +464,7 @@ class FileRepository(private val context: Context) {
             textResponse.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         } catch (e: Exception) {
             Log.e("FileRepository", "Error suggesting semantic tags: ${e.message}")
+            FileHelperUtils.handleApiError(context, e, "Gemini")
             listOf("SmartTag", "Cloud", "Verify")
         }
     }
@@ -542,6 +544,7 @@ class FileRepository(private val context: Context) {
             updated
         } catch (e: Exception) {
             Log.e("FileRepository", "Error in Gemini Batch Auto-Tag: ${e.message}")
+            FileHelperUtils.handleApiError(context, e, "Gemini")
             val updated = files.map { file ->
                 val suggested = generateInitialTagsForFile(file.name, file.category)
                 val current = file.tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
@@ -557,7 +560,7 @@ class FileRepository(private val context: Context) {
 
     // Pull Google Drive files and persist in DB alongside local files
     suspend fun fetchAndSaveDriveFiles(accessToken: String): Int = withContext(Dispatchers.IO) {
-        val cloudFiles = googleDriveService.fetchCloudFiles(accessToken)
+        val cloudFiles = googleDriveService.fetchCloudFiles(context, accessToken)
         if (cloudFiles.isNotEmpty()) {
             fileDao.insertFiles(cloudFiles)
         }
@@ -598,6 +601,7 @@ class FileRepository(private val context: Context) {
             finalDescription
         } catch (e: Exception) {
             Log.e("FileRepository", "Error in Gemini Single File Description: ${e.message}")
+            FileHelperUtils.handleApiError(context, e, "Gemini")
             val fallback = getAiDescriptionTemplate(file.name, "General", file.category)
             val updated = file.copy(aiDescription = fallback)
             fileDao.updateFile(updated)

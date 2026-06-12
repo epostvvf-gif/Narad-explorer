@@ -772,6 +772,7 @@ fun BrowseSection(
 
     var showSignInLocalDialog by remember { mutableStateOf(false) }
     var activeDashboardTagFilter by remember { mutableStateOf<String?>(null) }
+    var selectedExtensionGroup by remember { mutableStateOf("All") }
 
     val docxCount = remember(allFiles) {
         allFiles.count { it.tags.split(",").any { t -> t.trim().equals("docx", ignoreCase = true) } || it.name.endsWith(".docx", ignoreCase = true) }
@@ -796,6 +797,16 @@ fun BrowseSection(
                 (f == "docx" && file.name.endsWith(".docx", ignoreCase = true)) ||
                 (f == "book" && (file.name.contains("book", ignoreCase = true) || file.name.contains("ebook", ignoreCase = true))) ||
                 (f == "letters" && (file.name.contains("letter", ignoreCase = true) || file.name.contains("agreement", ignoreCase = true) || file.name.contains("slip", ignoreCase = true)))
+            }
+        }
+    }
+
+    val groupedFiles = remember(selectedExtensionGroup, displayedFiles) {
+        if (selectedExtensionGroup == "All") {
+            displayedFiles
+        } else {
+            displayedFiles.filter { file ->
+                com.example.data.FileHelperUtils.categorizeByExtension(file.name) == selectedExtensionGroup
             }
         }
     }
@@ -1058,19 +1069,51 @@ fun BrowseSection(
 
         // Recent Files / Scans List
         item {
-            Text(
-                text = if (activeDashboardTagFilter != null) {
-                    "श्रेणी फ़िल्टर: '${activeDashboardTagFilter}' (${displayedFiles.size} फ़ाइलें)"
-                } else {
-                    "हाल ही में जोड़ी गई फ़ाइलें (Recent Scans)"
-                },
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.secondary
-            )
+            Column {
+                Text(
+                    text = if (activeDashboardTagFilter != null) {
+                        "श्रेणी फ़िल्टर: '${activeDashboardTagFilter}' (${groupedFiles.size} फ़ाइलें)"
+                    } else {
+                        "हाल ही में जोड़ी गई फ़ाइलें (Recent Scans)"
+                    },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                
+                // Grouping Filter Row (Documents, Media, Archives)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    val groups = listOf(
+                        Triple("All", "सभी", Icons.Default.AllInclusive),
+                        Triple("Documents", "दस्तावेज़", Icons.Default.Description),
+                        Triple("Media", "मीडिया", Icons.Default.PlayCircle),
+                        Triple("Archives", "अभिलेख (Zip)", Icons.Default.Inventory)
+                    )
+                    
+                    groups.forEach { (groupId, label, icon) ->
+                        val isSelected = selectedExtensionGroup == groupId
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedExtensionGroup = groupId },
+                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier.testTag("extension_filter_${groupId.lowercase()}")
+                        )
+                    }
+                }
+            }
         }
 
-        if (displayedFiles.isEmpty()) {
+        if (groupedFiles.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -1079,7 +1122,9 @@ fun BrowseSection(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (activeDashboardTagFilter != null) {
+                        text = if (selectedExtensionGroup != "All") {
+                            "इस श्रेणी ('$selectedExtensionGroup') में कोई फ़ाइल नहीं मिली।"
+                        } else if (activeDashboardTagFilter != null) {
                             "इस श्रेणी से जुड़ी कोई फ़ाइल अनुक्रमित नहीं मिली।"
                         } else {
                             "कोई फ़ाइल अनुक्रमित नहीं है। रिफ्रेश बटन दबाएँ।"
@@ -1090,7 +1135,7 @@ fun BrowseSection(
                 }
             }
         } else {
-            items(displayedFiles.take(15)) { file ->
+            items(groupedFiles.take(15)) { file ->
                 FileItemRow(file = file, onItemClick = onFileClick, onStarClick = { viewModel.toggleStarred(file) })
                 Spacer(modifier = Modifier.height(8.dp))
             }
