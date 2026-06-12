@@ -319,8 +319,8 @@ fun MainScreen(viewModel: NaradViewModel, modifier: Modifier = Modifier) {
                         )
                     }
                     2 -> {
-                        // Semantic AI Search tab
-                        AiSearchSection(
+                        // Semantic AI Search fragment/screen running on-demand Gemini client processor
+                        SearchFragment(
                             viewModel = viewModel,
                             onFileClick = { fileDetailTarget = it }
                         )
