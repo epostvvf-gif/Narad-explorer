@@ -22,6 +22,9 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Regenerate Gradle Wrapper
+      run: gradle wrapper --gradle-version 9.3.1
+
     - name: Set up Environment Settings
       run: |
         if [ -f .env.example ]; then
