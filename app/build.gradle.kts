@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -29,7 +31,44 @@ android {
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
+      val keystoreFile = file("${rootDir}/debug.keystore")
+      val base64File = file("${rootDir}/debug.keystore.base64")
+      if (!keystoreFile.exists()) {
+        if (base64File.exists()) {
+          println("Decoding debug.keystore from base64...")
+          try {
+            val base64Bytes = base64File.readBytes()
+            val cleanBase64 = String(base64Bytes).replace("\\s".toRegex(), "")
+            val decodedBytes = Base64.getDecoder().decode(cleanBase64)
+            keystoreFile.writeBytes(decodedBytes)
+            println("Successfully decoded debug.keystore")
+          } catch (e: Exception) {
+            println("WARNING: Failed to decode debug.keystore.base64: ${e.message}")
+          }
+        }
+      }
+      if (!keystoreFile.exists()) {
+        println("Generating fallback debug keystore...")
+        try {
+          val pb = ProcessBuilder(
+            "keytool", "-genkey", "-v",
+            "-keystore", keystoreFile.absolutePath,
+            "-storepass", "android",
+            "-alias", "androiddebugkey",
+            "-keypass", "android",
+            "-keyalg", "RSA",
+            "-keysize", "2048",
+            "-validity", "10000",
+            "-dname", "CN=Android Debug,O=Android,C=US"
+          )
+          val process = pb.start()
+          process.waitFor()
+          println("Successfully generated fallback debug keystore")
+        } catch (e: Exception) {
+          println("WARNING: Failed to generate debug keystore using keytool ProcessBuilder: ${e.message}")
+        }
+      }
+      storeFile = keystoreFile
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
